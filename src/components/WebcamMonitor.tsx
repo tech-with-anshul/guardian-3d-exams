@@ -134,6 +134,70 @@ const WebcamMonitor = ({ isActive, onViolation, onStatusUpdate }: WebcamMonitorP
     }, 2000);
   };
 
+  const drawLandmarks = (canvas: HTMLCanvasElement, result: FaceLandmarkerResult, direction: string) => {
+    const ctx = canvas.getContext('2d');
+    if (!ctx || !videoRef.current) return;
+
+    const video = videoRef.current;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+
+    // Clear canvas
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Draw face landmarks
+    if (result.faceLandmarks && result.faceLandmarks.length > 0) {
+      for (const landmarks of result.faceLandmarks) {
+        // Draw face mesh
+        ctx.fillStyle = 'rgba(0, 255, 0, 0.5)';
+        for (const landmark of landmarks) {
+          ctx.beginPath();
+          ctx.arc(
+            landmark.x * canvas.width,
+            landmark.y * canvas.height,
+            2,
+            0,
+            2 * Math.PI
+          );
+          ctx.fill();
+        }
+
+        // Draw face outline
+        ctx.strokeStyle = 'rgba(0, 255, 0, 0.8)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        const faceOval = [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109];
+        faceOval.forEach((index, i) => {
+          if (index < landmarks.length) {
+            const point = landmarks[index];
+            if (i === 0) {
+              ctx.moveTo(point.x * canvas.width, point.y * canvas.height);
+            } else {
+              ctx.lineTo(point.x * canvas.width, point.y * canvas.height);
+            }
+          }
+        });
+        ctx.closePath();
+        ctx.stroke();
+      }
+    }
+
+    // Draw direction indicator
+    ctx.font = 'bold 24px Arial';
+    ctx.fillStyle = direction === 'Forward' ? '#00ff00' : '#ff0000';
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 3;
+    const text = `Looking: ${direction}`;
+    ctx.strokeText(text, 20, 40);
+    ctx.fillText(text, 20, 40);
+
+    // Draw face count
+    const faceCountText = `Faces: ${result.faceLandmarks.length}`;
+    ctx.fillStyle = result.faceLandmarks.length === 1 ? '#00ff00' : '#ff0000';
+    ctx.strokeText(faceCountText, 20, 75);
+    ctx.fillText(faceCountText, 20, 75);
+  };
+
   const calculateHeadPose = (result: FaceLandmarkerResult): string => {
     if (!result.facialTransformationMatrixes || result.facialTransformationMatrixes.length === 0) {
       return 'Forward';
@@ -142,7 +206,6 @@ const WebcamMonitor = ({ isActive, onViolation, onStatusUpdate }: WebcamMonitorP
     const matrix = result.facialTransformationMatrixes[0].data;
     
     // Extract rotation angles from transformation matrix
-    // Using simplified Euler angle extraction
     const rotationY = Math.atan2(matrix[8], matrix[10]);
     const rotationYDegrees = rotationY * (180 / Math.PI);
 
@@ -157,7 +220,7 @@ const WebcamMonitor = ({ isActive, onViolation, onStatusUpdate }: WebcamMonitorP
   };
 
   const analyzeFrame = async () => {
-    if (!videoRef.current || !faceLandmarker) return;
+    if (!videoRef.current || !canvasRef.current || !faceLandmarker) return;
 
     const video = videoRef.current;
     
@@ -183,6 +246,9 @@ const WebcamMonitor = ({ isActive, onViolation, onStatusUpdate }: WebcamMonitorP
         isLookingAway = direction !== 'Forward';
         setFaceDirection(direction);
       }
+
+      // Draw landmarks overlay
+      drawLandmarks(canvasRef.current, result, direction);
 
       // Check for violations with debouncing (only trigger if consistent for 2 checks)
       const timeSinceLastCheck = currentTime - lastDetectionRef.current.timestamp;
@@ -268,39 +334,50 @@ const WebcamMonitor = ({ isActive, onViolation, onStatusUpdate }: WebcamMonitorP
 
   return (
     <div className="space-y-4">
-      {/* Hidden video and canvas elements */}
-      <video
-        ref={videoRef}
-        autoPlay
-        muted
-        playsInline
-        className="hidden"
-      />
-      <canvas ref={canvasRef} className="hidden" />
+      {/* Webcam preview with overlay */}
+      <div className="relative w-full max-w-2xl mx-auto rounded-lg overflow-hidden border-2 border-border bg-card">
+        <video
+          ref={videoRef}
+          autoPlay
+          muted
+          playsInline
+          className="w-full h-auto"
+        />
+        <canvas 
+          ref={canvasRef} 
+          className="absolute top-0 left-0 w-full h-full pointer-events-none"
+        />
+
+      </div>
 
       {/* Monitoring status */}
       {isActive && (
-        <div className="flex items-center gap-4 p-3 bg-card/50 rounded-lg border">
+        <div className="flex flex-wrap items-center gap-4 p-3 bg-card rounded-lg border">
           <div className="flex items-center gap-2">
-            <Camera className="h-4 w-4 text-primary" />
+            <div className="relative">
+              <Camera className="h-4 w-4 text-primary" />
+              <span className="absolute -top-1 -right-1 w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+            </div>
             <span className="text-sm font-medium">AI Monitoring Active</span>
           </div>
 
           <div className="flex items-center gap-2">
-            <Users className="h-3 w-3" />
-            <span className={`text-sm ${getViolationColor(peopleCount > 1 ? 1 : 0)}`}>
+            <Users className="h-4 w-4" />
+            <span className={`text-sm font-medium ${getViolationColor(peopleCount > 1 ? 1 : 0)}`}>
               {peopleCount} {peopleCount === 1 ? 'person' : 'people'}
             </span>
           </div>
 
           <div className="flex items-center gap-2">
-            <Eye className="h-3 w-3" />
-            <span className="text-sm">Looking {faceDirection}</span>
+            <Eye className="h-4 w-4" />
+            <span className={`text-sm font-medium ${faceDirection === 'Forward' ? 'text-green-500' : 'text-destructive'}`}>
+              Looking {faceDirection}
+            </span>
           </div>
 
           {violations.length > 0 && (
             <Badge variant="destructive" className="ml-auto">
-              {violations.length} violations detected
+              {violations.length} violations
             </Badge>
           )}
         </div>
