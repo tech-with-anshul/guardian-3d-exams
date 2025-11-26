@@ -1,14 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import * as tf from '@tensorflow/tfjs';
-import '@tensorflow/tfjs-backend-webgl';
-import { pipeline, env } from '@huggingface/transformers';
+import { FaceLandmarker, FilesetResolver, FaceLandmarkerResult } from '@mediapipe/tasks-vision';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { AlertTriangle, Camera, Users, Eye } from 'lucide-react';
-
-// Configure transformers.js
-env.allowLocalModels = false;
-env.useBrowserCache = true;
 
 interface WebcamMonitorProps {
   isActive: boolean;
@@ -28,32 +22,50 @@ const WebcamMonitor = ({ isActive, onViolation, onStatusUpdate }: WebcamMonitorP
   const [isInitialized, setIsInitialized] = useState(false);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [detectionModel, setDetectionModel] = useState<any>(null);
+  const [faceLandmarker, setFaceLandmarker] = useState<FaceLandmarker | null>(null);
   const [peopleCount, setPeopleCount] = useState(1);
   const [faceDirection, setFaceDirection] = useState('Forward');
   const [violations, setViolations] = useState<Detection[]>([]);
   const monitoringIntervalRef = useRef<number | null>(null);
+  const lastDetectionRef = useRef<{ faces: number; direction: string; timestamp: number }>({
+    faces: 1,
+    direction: 'Forward',
+    timestamp: Date.now()
+  });
 
-  // Initialize TensorFlow.js
+  // Initialize MediaPipe Face Landmarker
   useEffect(() => {
-    const initTensorFlow = async () => {
+    const initFaceLandmarker = async () => {
       try {
-        await tf.ready();
-        console.log('TensorFlow.js initialized');
+        const vision = await FilesetResolver.forVisionTasks(
+          'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm'
+        );
         
-        // Load COCO-SSD model for object detection
-        const model = await pipeline('object-detection', 'Xenova/detr-resnet-50', {
-          device: 'webgpu',
+        const landmarker = await FaceLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+            delegate: 'GPU'
+          },
+          outputFaceBlendshapes: false,
+          outputFacialTransformationMatrixes: true,
+          runningMode: 'VIDEO',
+          numFaces: 2
         });
-        setDetectionModel(model);
+        
+        setFaceLandmarker(landmarker);
         setIsInitialized(true);
+        console.log('MediaPipe Face Landmarker initialized');
       } catch (err) {
-        console.error('Error initializing TensorFlow:', err);
+        console.error('Error initializing Face Landmarker:', err);
         setError('Failed to initialize AI models');
       }
     };
 
-    initTensorFlow();
+    initFaceLandmarker();
+
+    return () => {
+      faceLandmarker?.close();
+    };
   }, []);
 
   // Setup webcam when active
@@ -116,65 +128,78 @@ const WebcamMonitor = ({ isActive, onViolation, onStatusUpdate }: WebcamMonitorP
       clearInterval(monitoringIntervalRef.current);
     }
 
-    // Monitor every 3 seconds
+    // Monitor every 2 seconds for more responsive detection
     monitoringIntervalRef.current = window.setInterval(async () => {
       await analyzeFrame();
-    }, 3000);
+    }, 2000);
+  };
+
+  const calculateHeadPose = (result: FaceLandmarkerResult): string => {
+    if (!result.facialTransformationMatrixes || result.facialTransformationMatrixes.length === 0) {
+      return 'Forward';
+    }
+
+    const matrix = result.facialTransformationMatrixes[0].data;
+    
+    // Extract rotation angles from transformation matrix
+    // Using simplified Euler angle extraction
+    const rotationY = Math.atan2(matrix[8], matrix[10]);
+    const rotationYDegrees = rotationY * (180 / Math.PI);
+
+    // Determine direction based on Y-axis rotation
+    if (rotationYDegrees < -20) {
+      return 'Left';
+    } else if (rotationYDegrees > 20) {
+      return 'Right';
+    } else {
+      return 'Forward';
+    }
   };
 
   const analyzeFrame = async () => {
-    if (!videoRef.current || !canvasRef.current || !detectionModel) return;
+    if (!videoRef.current || !faceLandmarker) return;
 
     const video = videoRef.current;
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-
-    if (!ctx) return;
-
-    // Set canvas dimensions to match video
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-
-    // Draw current video frame to canvas
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    
+    // Check if video is ready
+    if (video.readyState !== video.HAVE_ENOUGH_DATA) return;
 
     try {
-      // Convert canvas to image data for analysis
-      const imageData = canvas.toDataURL('image/jpeg', 0.8);
-      
-      // Detect objects in the frame
-      const detections = await detectionModel(imageData);
-      
-      let peopleDetected = 0;
-      let faceDetected = false;
+      const startTimeMs = performance.now();
+      const result = faceLandmarker.detectForVideo(video, startTimeMs);
 
-      // Count people and faces
-      detections.forEach((detection: any) => {
-        if (detection.label === 'person' && detection.score > 0.5) {
-          peopleDetected++;
-        }
-        // Additional face detection logic can be added here
-      });
+      const currentTime = Date.now();
+      const facesDetected = result.faceLandmarks.length;
 
       // Update people count
-      setPeopleCount(peopleDetected);
+      setPeopleCount(facesDetected);
 
-      // Check for violations
-      const currentTime = Date.now();
+      // Determine face direction for the first detected face
+      let direction = 'Forward';
+      let isLookingAway = false;
 
+      if (facesDetected > 0) {
+        direction = calculateHeadPose(result);
+        isLookingAway = direction !== 'Forward';
+        setFaceDirection(direction);
+      }
+
+      // Check for violations with debouncing (only trigger if consistent for 2 checks)
+      const timeSinceLastCheck = currentTime - lastDetectionRef.current.timestamp;
+      
       // Multiple people violation
-      if (peopleDetected > 1) {
+      if (facesDetected > 1 && lastDetectionRef.current.faces > 1) {
         const violation: Detection = {
           timestamp: currentTime,
           type: 'multiple_people',
-          details: { count: peopleDetected }
+          details: { count: facesDetected }
         };
         setViolations(prev => [...prev, violation]);
-        onViolation('multiple_people', { count: peopleDetected });
+        onViolation('multiple_people', { count: facesDetected });
       }
 
-      // No person detected violation
-      if (peopleDetected === 0) {
+      // No face detected violation
+      if (facesDetected === 0 && lastDetectionRef.current.faces === 0) {
         const violation: Detection = {
           timestamp: currentTime,
           type: 'no_face',
@@ -184,11 +209,31 @@ const WebcamMonitor = ({ isActive, onViolation, onStatusUpdate }: WebcamMonitorP
         onViolation('no_face');
       }
 
+      // Looking away violation
+      if (facesDetected === 1 && isLookingAway && 
+          lastDetectionRef.current.direction !== 'Forward' && 
+          timeSinceLastCheck > 1000) {
+        const violation: Detection = {
+          timestamp: currentTime,
+          type: 'looking_away',
+          details: { direction }
+        };
+        setViolations(prev => [...prev, violation]);
+        onViolation('looking_away', { direction });
+      }
+
+      // Update last detection
+      lastDetectionRef.current = {
+        faces: facesDetected,
+        direction,
+        timestamp: currentTime
+      };
+
       // Update status
       onStatusUpdate({
-        peopleCount: peopleDetected,
-        faceDirection,
-        isLookingAway: false // This would need more sophisticated pose estimation
+        peopleCount: facesDetected,
+        faceDirection: direction,
+        isLookingAway
       });
 
     } catch (err) {
