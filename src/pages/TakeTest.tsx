@@ -42,24 +42,9 @@ const TakeTest = () => {
   const [systemReady, setSystemReady] = useState(false);
   const [systemWarnings, setSystemWarnings] = useState<string[]>([]);
 
-  // Webcam monitoring state
-  const [webcamActive, setWebcamActive] = useState(false);
-  const [webcamDenied, setWebcamDenied] = useState(false);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const webcamIntervalRef = useRef<number | null>(null);
-  const [facingDirection, setFacingDirection] = useState<string>("Forward");
-  const [facingAway, setFacingAway] = useState(false);
-  const [webcamWarnings, setWebcamWarnings] = useState(0);
+  // Simplified state - webcam handled by WebcamMonitor component
   const [lastTabSwitchTime, setLastTabSwitchTime] = useState<number | null>(null);
   const [rapidTabSwitches, setRapidTabSwitches] = useState(0);
-  const [peopleCount, setPeopleCount] = useState(1);
-  const [lastImageCapture, setLastImageCapture] = useState<string | null>(null);
-  const captureIntervalRef = useRef<number | null>(null);
-  
-  // Camera movement detection state
-  const [movementWarnings, setMovementWarnings] = useState(0);
-  const [lastPosePosition, setLastPosePosition] = useState<any>(null);
-  const [consecutiveMovements, setConsecutiveMovements] = useState(0);
   
   // Test monitoring hook
   const {
@@ -93,8 +78,8 @@ const TakeTest = () => {
     warningThreshold: 3
   });
 
-  // Update existing warningCount to include movement warnings
-  const totalWarningCount = warningCount + monitoringWarnings + (webcamWarnings || 0) + movementWarnings + webcamMonitoring.violationCount;
+  // Update existing warningCount to include webcam violations
+  const totalWarningCount = warningCount + monitoringWarnings + webcamMonitoring.violationCount;
 
   // System preparation handlers
   const handleSystemReady = () => {
@@ -283,7 +268,7 @@ const TakeTest = () => {
 
   // Monitoring integration
   useEffect(() => {
-    if (test && monitorFullscreen && !isMonitoring) {
+    if (test && testIdVerified && monitorFullscreen && !isMonitoring) {
       startMonitoring();
       webcamMonitoring.startMonitoring();
       toast({
@@ -296,7 +281,7 @@ const TakeTest = () => {
       stopMonitoring();
       webcamMonitoring.stopMonitoring();
     }
-  }, [test, monitorFullscreen, isMonitoring, startMonitoring, stopMonitoring, toast, webcamMonitoring]);
+  }, [test, testIdVerified, monitorFullscreen, isMonitoring, startMonitoring, stopMonitoring, toast]);
 
   // Enhanced tab switching prevention
   useEffect(() => {
@@ -373,229 +358,24 @@ const TakeTest = () => {
     };
   }, [test, isFullscreen, toast, sessionId]);
 
-  // Capture image from webcam
-  const captureImage = async (): Promise<string | null> => {
-    if (!videoRef.current || !webcamActive) return null;
-    
-    const canvas = document.createElement('canvas');
-    canvas.width = videoRef.current.videoWidth;
-    canvas.height = videoRef.current.videoHeight;
-    const ctx = canvas.getContext('2d');
-    
-    if (!ctx) return null;
-    
-    // Draw the video frame to the canvas
-    ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-    
-    // Convert to base64
-    const imageData = canvas.toDataURL('image/jpeg', 0.8);
-    setLastImageCapture(imageData);
-    
-    return imageData;
-  };
-
-  // Webcam monitoring setup with AI model integration
-  useEffect(() => {
-    if (!isFullscreen || webcamDenied) return;
-    
-    if (isFullscreen && !webcamActive && !webcamDenied) {
-      // Request webcam access
-      const setupWebcam = async () => {
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: "user" }
-          });
-          
-          if (videoRef.current) {
-            videoRef.current.srcObject = stream;
-            setWebcamActive(true);
-            
-            // Start monitoring after a short delay to let the webcam initialize
-            setTimeout(() => {
-              // Set up continuous monitoring with the AI model
-              captureIntervalRef.current = window.setInterval(async () => {
-                const imageData = await captureImage();
-                if (imageData) {
-                  checkFacePresenceWithAI(imageData);
-                }
-              }, 5000); // Check every 5 seconds
-            }, 2000);
-          }
-        } catch (err) {
-          console.error("Error accessing webcam:", err);
-          setWebcamDenied(true);
-          
-          toast({
-            title: "Webcam access required",
-            description: "Please enable webcam access to continue with the test.",
-            variant: "destructive",
-          });
-        }
-      };
-      
-      setupWebcam();
-    }
-    
-    return () => {
-      // Cleanup webcam on unmount
-      if (captureIntervalRef.current) {
-        clearInterval(captureIntervalRef.current);
-      }
-      
-      if (videoRef.current && videoRef.current.srcObject) {
-        const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
-        tracks.forEach(track => track.stop());
-        videoRef.current.srcObject = null;
-      }
-    };
-  }, [isFullscreen, webcamActive, webcamDenied, toast]);
-
-  // AI-powered face presence check with movement detection
-  const checkFacePresenceWithAI = async (imageData: string) => {
-    try {
-      // Detect pose using the Python model
-      const poseResult = await detectPose(imageData);
-      
-      // Check for excessive movement by comparing pose positions
-      if (poseResult.pose) {
-        // Simplified movement detection without position data
-        // We'll track pose changes as movement indicators
-        if (lastPosePosition && lastPosePosition !== poseResult.pose) {
-          const newConsecutiveMovements = consecutiveMovements + 1;
-          setConsecutiveMovements(newConsecutiveMovements);
-          
-          // If 3 consecutive pose changes detected, issue warning
-          if (newConsecutiveMovements >= 3) {
-            handleExcessiveMovement();
-            setConsecutiveMovements(0); // Reset counter
-          }
-        } else if (lastPosePosition === poseResult.pose) {
-          setConsecutiveMovements(0); // Reset if same pose
-        }
-        setLastPosePosition(poseResult.pose);
-      }
-      
-      // Determine the facing direction based on pose
-      if (poseResult.pose) {
-        setFacingDirection(poseResult.pose);
-        const isLookingAway = poseResult.pose !== "Forward";
-        
-        if (isLookingAway && !facingAway) {
-          handleFaceNotDetected(poseResult.pose);
-          setFacingAway(true);
-        } else if (!isLookingAway && facingAway) {
-          setFacingAway(false);
-        }
-      } else if (poseResult.message === "face not found") {
-        handleFaceNotDetected("No face detected");
-        setFacingAway(true);
-      }
-      
-      // Check for multiple people if face was found
-      if (poseResult.pose && user) {
-        const peopleResult = await detectPeople(imageData);
-        if (peopleResult.people > 1) {
-          setPeopleCount(peopleResult.people);
-          handleMultiplePeopleDetected(peopleResult.people);
-        } else {
-          setPeopleCount(1);
-        }
-        
-        // Occasionally save the image for monitoring purposes
-        if (Math.random() < 0.2) { // 20% chance to save the image
-          saveImage(imageData, user.id);
-        }
-      }
-    } catch (error) {
-      console.error("Error in AI face detection:", error);
-    }
-  };
-  
-  // Handle when multiple people are detected
+  // Handle when multiple people are detected (now handled by WebcamMonitor)
   const handleMultiplePeopleDetected = (count: number) => {
-    const newWebcamWarnings = webcamWarnings + 1;
-    setWebcamWarnings(newWebcamWarnings);
-    
     toast({
-      title: `Security Warning (${newWebcamWarnings}/3)`,
+      title: `Security Warning`,
       description: `Multiple people detected (${count}). You should be alone during the test.`,
       variant: "destructive",
     });
-    
-    if (newWebcamWarnings >= 3) {
-      const newWarningCount = warningCount + 1;
-      setWarningCount(newWarningCount);
-      
-      // Update warning count in session
-      if (sessionId) {
-        updateSessionWarnings(newWarningCount);
-      }
-      
-      // Reset webcam warnings
-      setWebcamWarnings(0);
-      
-      if (newWarningCount >= 3) {
-        handleSubmit(true);
-      }
-    }
   };
 
-  // Handle excessive movement detection
-  const handleExcessiveMovement = () => {
-    const newMovementWarnings = movementWarnings + 1;
-    setMovementWarnings(newMovementWarnings);
-    
-    toast({
-      title: `Movement Warning (${newMovementWarnings}/3)`,
-      description: `Excessive movement detected. Please remain seated and face the camera.`,
-      variant: "destructive",
-    });
-    
-    // Auto-terminate if too many movement warnings
-    if (newMovementWarnings >= 3) {
-      toast({
-        title: "Test Terminated",
-        description: "Test terminated due to excessive movement during the exam.",
-        variant: "destructive",
-      });
-      handleSubmit(true);
-    }
-    
-    // Update session warnings in localStorage
-    if (sessionId) {
-      updateSessionWarnings(totalWarningCount + 1);
-    }
-  };
-
-  // Handle when face is not detected or looking away
+  // Handle when face is not detected or looking away (now handled by WebcamMonitor)
   const handleFaceNotDetected = (direction: string) => {
-    const newWebcamWarnings = webcamWarnings + 1;
-    setWebcamWarnings(newWebcamWarnings);
-    
     toast({
-      title: `Webcam Warning (${newWebcamWarnings}/3)`,
+      title: `Webcam Warning`,
       description: direction === "No face detected" 
         ? "Your face is not visible. Please face the camera."
         : `You appear to be looking ${direction.toLowerCase()}. Please look at the screen.`,
       variant: "destructive",
     });
-    
-    if (newWebcamWarnings >= 3) {
-      const newWarningCount = warningCount + 1;
-      setWarningCount(newWarningCount);
-      
-      // Update warning count in session
-      if (sessionId) {
-        updateSessionWarnings(newWarningCount);
-      }
-      
-      // Reset webcam warnings
-      setWebcamWarnings(0);
-      
-      if (newWarningCount >= 3) {
-        handleSubmit(true);
-      }
-    }
   };
 
   // Save answer after change (debounced)
@@ -711,17 +491,6 @@ const TakeTest = () => {
           URL.revokeObjectURL(url);
         }
       });
-      
-      // Stop webcam
-      if (videoRef.current && videoRef.current.srcObject) {
-        const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
-        tracks.forEach(track => track.stop());
-        videoRef.current.srcObject = null;
-      }
-      
-      if (webcamIntervalRef.current) {
-        clearInterval(webcamIntervalRef.current);
-      }
       
       if (sessionId) {
         const SESS_KEY = "pariksha_sessions";
@@ -940,45 +709,6 @@ const TakeTest = () => {
                 <div className="flex items-center gap-2 bg-primary/20 text-primary p-2 rounded-md">
                   <TabletSmartphone className="h-5 w-5" />
                   Tab Shifts: {rapidTabSwitches}/3
-                </div>
-                <div className={`flex items-center gap-2 p-2 rounded-md ${
-                  webcamDenied ? 'bg-destructive/20 text-destructive' : 
-                  facingAway ? 'bg-yellow-500/20 text-yellow-500' : 
-                  'bg-green-500/20 text-green-500'
-                }`}>
-                  <Camera className="h-5 w-5" />
-                  {webcamDenied ? 'Webcam Denied' : 
-                   facingAway ? `Looking ${facingDirection}` : 'Looking Forward'}
-                </div>
-                {peopleCount > 1 && (
-                  <div className="flex items-center gap-2 bg-red-500/20 text-red-500 p-2 rounded-md">
-                    <AlertTriangle className="h-5 w-5" />
-                    {peopleCount} People Detected
-                  </div>
-                )}
-              </div>
-            </div>
-            
-            {/* Webcam view */}
-            <div className="absolute top-4 right-4 z-20">
-              <div className="relative w-48 h-36 overflow-hidden rounded-md border border-primary/20 shadow-md">
-                {webcamActive ? (
-                  <video
-                    ref={videoRef}
-                    autoPlay
-                    muted
-                    playsInline
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  <div className="w-full h-full bg-muted flex items-center justify-center">
-                    <Camera className="h-8 w-8 text-muted-foreground" />
-                  </div>
-                )}
-                <div className="absolute bottom-0 left-0 right-0 bg-background/80 backdrop-blur-sm py-1 px-2 text-xs">
-                  {facingDirection !== "Forward" ? 
-                    `Looking ${facingDirection}` : 
-                    "Looking Forward"}
                 </div>
               </div>
             </div>
