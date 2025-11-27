@@ -8,41 +8,129 @@ import {
   CardTitle 
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Copy, ArrowLeft } from "lucide-react";
+import { Copy, ArrowLeft, ClipboardCheck, Loader2 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import { useTest } from "@/context/TestContext";
+import { supabase } from "@/integrations/supabase/client";
 import TestSessionsChart from "@/components/TestSessionsChart";
 import StudentWarningsTable from "@/components/StudentWarningsTable";
 
-// Mock data for student sessions
-const mockSessions = [
-  { id: "1", student_id: "s1", erp_id: "1902112", name: "John Doe", warnings: 4, status: "active", message: "Multiple People Detected" },
-  { id: "2", student_id: "s2", erp_id: "1902113", name: "Jane Smith", warnings: 0, status: "active", message: "" },
-  { id: "3", student_id: "s3", erp_id: "1902114", name: "Bob Brown", warnings: 1, status: "active", message: "Looking Away Detected" },
-  { id: "4", student_id: "s4", erp_id: "1902115", name: "Alice Green", warnings: 2, status: "active", message: "Multiple People Detected" },
-  { id: "5", student_id: "s5", erp_id: "1902116", name: "Charlie Wilson", warnings: 5, status: "terminated", message: "Multiple People Detected" },
-];
+interface TestSession {
+  id: string;
+  student_id: string;
+  erp_id: string;
+  name: string;
+  warnings: number;
+  status: string;
+  message: string;
+  submitted_at: string | null;
+}
 
 const TestDashboard = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { toast } = useToast();
   const { getTestById } = useTest();
-  const [testSessions, setTestSessions] = useState(mockSessions);
+  const [testSessions, setTestSessions] = useState<TestSession[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
   const test = getTestById(id || "");
 
+  // Fetch real sessions from Supabase
   useEffect(() => {
-    if (!test) {
+    if (!id) return;
+
+    const fetchSessions = async () => {
+      setIsLoading(true);
+      try {
+        const { data: sessions, error } = await supabase
+          .from("test_sessions")
+          .select(`
+            id,
+            student_id,
+            status,
+            total_warnings,
+            submitted_at,
+            profiles:student_id (
+              full_name,
+              email
+            )
+          `)
+          .eq("test_id", id);
+
+        if (error) {
+          console.error("Error fetching sessions:", error);
+          toast({
+            title: "Error",
+            description: "Failed to load test sessions.",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        const formattedSessions: TestSession[] = (sessions || []).map((session: any) => ({
+          id: session.id,
+          student_id: session.student_id,
+          erp_id: session.profiles?.email?.split("@")[0] || "N/A",
+          name: session.profiles?.full_name || "Unknown Student",
+          warnings: session.total_warnings || 0,
+          status: session.status === "submitted" ? "submitted" : session.status === "terminated" ? "terminated" : "active",
+          message: "",
+          submitted_at: session.submitted_at,
+        }));
+
+        setTestSessions(formattedSessions);
+      } catch (error) {
+        console.error("Error:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchSessions();
+
+    // Set up realtime subscription
+    const channel = supabase
+      .channel(`test-sessions-${id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "test_sessions",
+          filter: `test_id=eq.${id}`,
+        },
+        () => {
+          fetchSessions();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [id, toast]);
+
+  useEffect(() => {
+    if (!test && !isLoading) {
       navigate("/faculty-dashboard");
     }
-  }, [test, navigate]);
+  }, [test, navigate, isLoading]);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   if (!test) return null;
 
   // Calculate statistics
-  const activeStudents = testSessions.filter(session => session.status === "active").length;
+  const activeStudents = testSessions.filter(session => session.status === "active" || session.status === "in_progress").length;
   const terminatedStudents = testSessions.filter(session => session.status === "terminated").length;
+  const submittedStudents = testSessions.filter(session => session.status === "submitted").length;
 
   const handleCopyTestId = () => {
     if (test.unique_id) {
@@ -54,7 +142,21 @@ const TestDashboard = () => {
     }
   };
 
-  const handleTerminateStudent = (sessionId: string) => {
+  const handleTerminateStudent = async (sessionId: string) => {
+    const { error } = await supabase
+      .from("test_sessions")
+      .update({ status: "terminated" })
+      .eq("id", sessionId);
+
+    if (error) {
+      toast({
+        title: "Error",
+        description: "Failed to terminate student.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setTestSessions(prev => 
       prev.map(session => 
         session.id === sessionId 
@@ -70,7 +172,21 @@ const TestDashboard = () => {
     });
   };
 
-  const handleContinueStudent = (sessionId: string) => {
+  const handleContinueStudent = async (sessionId: string) => {
+    const { error } = await supabase
+      .from("test_sessions")
+      .update({ status: "in_progress" })
+      .eq("id", sessionId);
+
+    if (error) {
+      toast({
+        title: "Error",
+        description: "Failed to continue student.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setTestSessions(prev => 
       prev.map(session => 
         session.id === sessionId 
@@ -83,6 +199,10 @@ const TestDashboard = () => {
       title: "Student Continued",
       description: "The student can continue the test.",
     });
+  };
+
+  const handleEvaluateSubmission = (sessionId: string, studentId: string) => {
+    navigate(`/evaluate-submission/${id}/${sessionId}/${studentId}`);
   };
 
   return (
@@ -155,7 +275,7 @@ const TestDashboard = () => {
       </div>
 
       {/* Live Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle>Active Students</CardTitle>
@@ -168,10 +288,20 @@ const TestDashboard = () => {
 
         <Card>
           <CardHeader className="pb-2">
+            <CardTitle>Submitted</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold text-green-500">{submittedStudents}</div>
+            <p className="text-sm text-muted-foreground">Completed the test</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
             <CardTitle>Terminated</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold">{terminatedStudents}</div>
+            <div className="text-3xl font-bold text-red-500">{terminatedStudents}</div>
             <p className="text-sm text-muted-foreground">Removed from test</p>
           </CardContent>
         </Card>
@@ -186,6 +316,47 @@ const TestDashboard = () => {
           </CardContent>
         </Card>
       </div>
+
+      {/* Submitted Tests for Evaluation */}
+      {submittedStudents > 0 && (
+        <Card className="mb-8">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <ClipboardCheck className="h-5 w-5 text-primary" />
+              Submissions Ready for Evaluation
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {testSessions
+                .filter(session => session.status === "submitted")
+                .map((session) => (
+                  <div 
+                    key={session.id} 
+                    className="flex items-center justify-between p-4 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
+                  >
+                    <div>
+                      <p className="font-medium">{session.name}</p>
+                      <p className="text-sm text-muted-foreground">
+                        ERP: {session.erp_id} • Warnings: {session.warnings}
+                        {session.submitted_at && (
+                          <> • Submitted: {new Date(session.submitted_at).toLocaleString()}</>
+                        )}
+                      </p>
+                    </div>
+                    <Button 
+                      onClick={() => handleEvaluateSubmission(session.id, session.student_id)}
+                      className="flex items-center gap-2"
+                    >
+                      <ClipboardCheck className="h-4 w-4" />
+                      Evaluate
+                    </Button>
+                  </div>
+                ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Charts section */}
       <Card className="mb-8">
