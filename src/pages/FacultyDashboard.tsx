@@ -163,7 +163,7 @@ const FacultyDashboard = () => {
       if (sortBy === "title") return a.title.localeCompare(b.title);
       if (sortBy === "questions") return b.questions.length - a.questions.length;
       if (sortBy === "duration") return b.duration - a.duration;
-      if (sortBy === "recent") return b.id - a.id;
+      if (sortBy === "recent") return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
       return 0;
     });
 
