@@ -26,7 +26,7 @@ import {
   Text,
   Trash
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 const subjects = [
@@ -168,7 +168,7 @@ const CreateTest = () => {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+            Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
           },
           body: JSON.stringify({
             documentText: text,
@@ -187,10 +187,10 @@ const CreateTest = () => {
       const data = await response.json();
       
       // Transform AI questions to match our format
-      const transformedQuestions = data.questions.map((q: any) => {
+      const transformedQuestions: Omit<Question, "id">[] = data.questions.map((q: any) => {
         if (q.type === "mcq") {
           return {
-            type: "mcq",
+            type: "mcq" as const,
             text: q.text,
             options: q.options,
             correctAnswer: q.correctAnswer,
@@ -198,14 +198,14 @@ const CreateTest = () => {
           };
         } else if (q.type === "truefalse") {
           return {
-            type: "truefalse",
+            type: "truefalse" as const,
             text: q.text,
             correctAnswer: q.correctAnswer.toLowerCase() === "true",
             marks: q.marks || 3,
           };
         } else {
           return {
-            type: "short",
+            type: "short" as const,
             text: q.text,
             correctAnswer: q.correctAnswer,
             marks: q.marks || 5,
@@ -427,58 +427,61 @@ const CreateTest = () => {
     navigate("/login");
   };
 
-  const renderQuestionTypeIcon = (type: string) => {
-    switch (type) {
-      case "mcq":
-        return <Check className="h-4 w-4 mr-2" />;
-      case "essay":
-        return <FileText className="h-4 w-4 mr-2" />;
-      case "truefalse":
-        return <Check className="h-4 w-4 mr-2" />;
-      case "short":
-        return <Text className="h-4 w-4 mr-2" />;
-      case "long":
-        return <FileText className="h-4 w-4 mr-2" />;
-      case "image":
-        return <FileImage className="h-4 w-4 mr-2" />;
-      case "coding":
-        return <Code className="h-4 w-4 mr-2" />;
-      default:
-        return null;
-    }
-  };
+  const renderQuestionTypeIcon = useMemo(() => {
+    return (type: string) => {
+      switch (type) {
+        case "mcq":
+          return <Check className="h-4 w-4 mr-2" />;
+        case "essay":
+          return <FileText className="h-4 w-4 mr-2" />;
+        case "truefalse":
+          return <Check className="h-4 w-4 mr-2" />;
+        case "short":
+          return <Text className="h-4 w-4 mr-2" />;
+        case "long":
+          return <FileText className="h-4 w-4 mr-2" />;
+        case "image":
+          return <FileImage className="h-4 w-4 mr-2" />;
+        case "coding":
+          return <Code className="h-4 w-4 mr-2" />;
+        default:
+          return null;
+      }
+    };
+  }, []);
 
-  // Function to render question format guidance based on question type
-  const renderFormatGuidance = (type: string) => {
-    switch (type) {
-      case "short":
-        return (
-          <div className="text-sm text-muted-foreground mt-1">
-            Short answer questions typically require 1-2 sentences or a few words.
-          </div>
-        );
-      case "long":
-        return (
-          <div className="text-sm text-muted-foreground mt-1">
-            Long answer questions require extended responses, typically paragraphs.
-          </div>
-        );
-      case "image":
-        return (
-          <div className="text-sm text-muted-foreground mt-1">
-            Student will upload an image as their answer. Consider specifying image requirements.
-          </div>
-        );
-      case "coding":
-        return (
-          <div className="text-sm text-muted-foreground mt-1">
-            Students will write and execute code. Configure the programming language and test cases.
-          </div>
-        );
-      default:
-        return null;
-    }
-  };
+  const renderFormatGuidance = useMemo(() => {
+    return (type: string) => {
+      switch (type) {
+        case "short":
+          return (
+            <div className="text-sm text-muted-foreground mt-1">
+              Short answer questions typically require 1-2 sentences or a few words.
+            </div>
+          );
+        case "long":
+          return (
+            <div className="text-sm text-muted-foreground mt-1">
+              Long answer questions require extended responses, typically paragraphs.
+            </div>
+          );
+        case "image":
+          return (
+            <div className="text-sm text-muted-foreground mt-1">
+              Student will upload an image as their answer. Consider specifying image requirements.
+            </div>
+          );
+        case "coding":
+          return (
+            <div className="text-sm text-muted-foreground mt-1">
+              Students will write and execute code. Configure the programming language and test cases.
+            </div>
+          );
+        default:
+          return null;
+      }
+    };
+  }, []);
 
   if (!user) {
     return null;
@@ -558,7 +561,7 @@ const CreateTest = () => {
                   min="5"
                   max="50"
                   value={numberOfQuestions}
-                  onChange={(e) => setNumberOfQuestions(parseInt(e.target.value))}
+                  onChange={(e) => setNumberOfQuestions(parseInt(e.target.value) || 5)}
                 />
               </div>
               
@@ -679,43 +682,43 @@ const CreateTest = () => {
                           <SelectValue placeholder="Select type" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="mcq" className="flex items-center">
+                          <SelectItem value="mcq">
                             <div className="flex items-center">
                               {renderQuestionTypeIcon("mcq")}
                               Multiple Choice
                             </div>
                           </SelectItem>
-                          <SelectItem value="essay" className="flex items-center">
+                          <SelectItem value="essay">
                             <div className="flex items-center">
                               {renderQuestionTypeIcon("essay")}
                               Essay
                             </div>
                           </SelectItem>
-                          <SelectItem value="truefalse" className="flex items-center">
+                          <SelectItem value="truefalse">
                             <div className="flex items-center">
                               {renderQuestionTypeIcon("truefalse")}
                               True/False
                             </div>
                           </SelectItem>
-                          <SelectItem value="short" className="flex items-center">
+                          <SelectItem value="short">
                             <div className="flex items-center">
                               {renderQuestionTypeIcon("short")}
                               Short Answer
                             </div>
                           </SelectItem>
-                          <SelectItem value="long" className="flex items-center">
+                          <SelectItem value="long">
                             <div className="flex items-center">
                               {renderQuestionTypeIcon("long")}
                               Long Answer
                             </div>
                           </SelectItem>
-                          <SelectItem value="image" className="flex items-center">
+                          <SelectItem value="image">
                             <div className="flex items-center">
                               {renderQuestionTypeIcon("image")}
                               Image Upload
                             </div>
                           </SelectItem>
-                          <SelectItem value="coding" className="flex items-center">
+                          <SelectItem value="coding">
                             <div className="flex items-center">
                               {renderQuestionTypeIcon("coding")}
                               Coding Question
@@ -756,6 +759,7 @@ const CreateTest = () => {
                       {question.options?.map((option, optIndex) => (
                         <div key={optIndex} className="flex items-center gap-3">
                           <Button
+                            type="button"
                             variant={question.correctAnswer === option ? "default" : "outline"}
                             size="sm"
                             className="w-8 h-8 p-0 flex-shrink-0"
@@ -779,6 +783,7 @@ const CreateTest = () => {
                       <Label>Correct Answer</Label>
                       <div className="flex gap-3">
                         <Button
+                          type="button"
                           variant={question.correctAnswer === true ? "default" : "outline"}
                           onClick={() => handleCorrectAnswerChange(index, true)}
                           className="w-full"
@@ -786,6 +791,7 @@ const CreateTest = () => {
                           True
                         </Button>
                         <Button
+                          type="button"
                           variant={question.correctAnswer === false ? "default" : "outline"}
                           onClick={() => handleCorrectAnswerChange(index, false)}
                           className="w-full"
@@ -983,6 +989,7 @@ const CreateTest = () => {
           ))}
           
           <Button 
+            type="button"
             variant="outline" 
             onClick={handleAddQuestion}
             className="w-full flex items-center justify-center gap-2 border-dashed"
@@ -995,6 +1002,7 @@ const CreateTest = () => {
         {/* Action Buttons */}
         <div className="mt-8 flex justify-end gap-4">
           <Button 
+            type="button"
             variant="outline" 
             onClick={() => handleSaveTest("draft")}
             className="flex items-center gap-2"
@@ -1004,6 +1012,7 @@ const CreateTest = () => {
           </Button>
           
           <Button 
+            type="button"
             onClick={() => handleSaveTest("published")}
             className="flex items-center gap-2"
           >
