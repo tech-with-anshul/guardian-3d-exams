@@ -1,5 +1,7 @@
 
 import { createContext, useContext, ReactNode, useState, useEffect } from "react";
+import { supabase } from "@/integrations/supabase/client";
+import { useToast } from "@/components/ui/use-toast";
 
 export interface Question {
   id: string;
@@ -29,7 +31,7 @@ export interface Test {
   createdBy: string;
   createdAt: Date;
   status: "draft" | "published";
-  unique_id?: string; // Add unique test ID
+  unique_id?: string;
 }
 
 interface TestContextType {
@@ -40,88 +42,62 @@ interface TestContextType {
   updateTest: (id: string, test: Partial<Test>) => Promise<void>;
   deleteTest: (id: string) => Promise<void>;
   generateUniqueTestId: () => string;
+  refreshTests: () => Promise<void>;
 }
 
-
 const TestContext = createContext<TestContextType | undefined>(undefined);
-
-// Initial mock test data
-const INITIAL_TESTS: Test[] = [
-  {
-    id: "88888888-8888-8888-8888-888888888888",
-    title: "Data Structures and Algorithms Test",
-    subject: "Computer Science",
-    duration: 60,
-    createdBy: "11111111-1111-1111-1111-111111111111",
-    createdAt: new Date(),
-    status: "published",
-    unique_id: "TST-DSA001",
-    questions: [
-      {
-        id: "99999999-9999-9999-9999-999999999999",
-        type: "mcq",
-        text: "What is the time complexity of binary search?",
-        marks: 5,
-        options: ["O(n)", "O(log n)", "O(n^2)", "O(1)"],
-        correctAnswer: "O(log n)"
-      },
-      {
-        id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-        type: "short",
-        text: "Explain the difference between stack and queue data structures.",
-        marks: 10
-      },
-      {
-        id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-        type: "coding",
-        text: "Write a function to reverse a linked list.",
-        marks: 15,
-        codingLanguage: "java",
-        starterCode: "public ListNode reverseList(ListNode head) {\n    // Your code here\n    return null;\n}",
-        expectedOutput: "Reversed linked list",
-        testCases: [
-          {
-            input: "1->2->3->4->5",
-            expectedOutput: "5->4->3->2->1",
-            description: "Basic test case"
-          }
-        ]
-      }
-    ]
-  }
-];
 
 export function TestProvider({ children }: { children: ReactNode }) {
   const [tests, setTests] = useState<Test[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const { toast } = useToast();
 
-  // Initialize tests from localStorage on mount
-  useEffect(() => {
-    const initializeTests = () => {
-      const storedTests = localStorage.getItem("pariksha_tests");
-      if (storedTests) {
-        try {
-          const parsed = JSON.parse(storedTests) as Test[];
-          const testsWithDates = parsed.map(test => ({
-            ...test,
-            createdAt: new Date(test.createdAt)
-          }));
-          setTests(testsWithDates);
-        } catch (error) {
-          console.error("Error parsing stored tests:", error);
-          // Initialize with default tests if parsing fails
-          setTests(INITIAL_TESTS);
-          localStorage.setItem("pariksha_tests", JSON.stringify(INITIAL_TESTS));
-        }
-      } else {
-        // Initialize with default tests
-        setTests(INITIAL_TESTS);
-        localStorage.setItem("pariksha_tests", JSON.stringify(INITIAL_TESTS));
+  const fetchTests = async () => {
+    try {
+      const { data: testsData, error: testsError } = await supabase
+        .from("tests")
+        .select(`
+          *,
+          questions (*)
+        `)
+        .order("created_at", { ascending: false });
+
+      if (testsError) {
+        console.error("Error fetching tests:", testsError);
+        return;
       }
-      setIsLoading(false);
-    };
 
-    initializeTests();
+      if (testsData) {
+        const transformedTests: Test[] = testsData.map((test) => ({
+          id: test.id,
+          title: test.title,
+          subject: test.subject,
+          duration: test.duration_minutes,
+          createdBy: test.created_by,
+          createdAt: new Date(test.created_at),
+          status: test.test_type === "mcq" ? "published" : "published",
+          unique_id: test.test_id,
+          questions: (test.questions || []).map((q: any) => ({
+            id: q.id,
+            type: q.question_type as Question["type"],
+            text: q.question_text,
+            options: q.options as string[] | undefined,
+            correctAnswer: q.correct_answer,
+            marks: q.marks,
+          })).sort((a: any, b: any) => a.order_number - b.order_number),
+        }));
+
+        setTests(transformedTests);
+      }
+    } catch (error) {
+      console.error("Error in fetchTests:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchTests();
   }, []);
 
   const generateUniqueTestId = () => {
@@ -131,63 +107,195 @@ export function TestProvider({ children }: { children: ReactNode }) {
 
   const createTest = async (test: Omit<Test, "id" | "createdAt">) => {
     setIsLoading(true);
-    
-    const newTest: Test = {
-      id: crypto.randomUUID(),
-      title: test.title,
-      subject: test.subject,
-      duration: test.duration,
-      createdBy: test.createdBy,
-      createdAt: new Date(),
-      status: test.status,
-      unique_id: test.unique_id || generateUniqueTestId(),
-      questions: test.questions.map(q => ({
-        ...q,
-        id: q.id || crypto.randomUUID()
-      })),
-    };
 
-    const updatedTests = [newTest, ...tests];
-    setTests(updatedTests);
-    localStorage.setItem("pariksha_tests", JSON.stringify(updatedTests));
-    
-    setIsLoading(false);
+    try {
+      const testId = generateUniqueTestId();
+      
+      // Map question type to database enum
+      const mapQuestionType = (type: string): "mcq" | "truefalse" | "short" | "descriptive" | "image" => {
+        switch (type) {
+          case "mcq": return "mcq";
+          case "truefalse": return "truefalse";
+          case "short": return "short";
+          case "long":
+          case "essay":
+          case "coding":
+            return "descriptive";
+          case "image": return "image";
+          default: return "short";
+        }
+      };
+
+      // Determine test type based on questions
+      const hasOnlyMcq = test.questions.every(q => q.type === "mcq" || q.type === "truefalse");
+      const hasOnlyDescriptive = test.questions.every(q => ["short", "long", "essay", "coding"].includes(q.type));
+      const testType = hasOnlyMcq ? "mcq" : hasOnlyDescriptive ? "descriptive" : "mixed";
+
+      // Calculate total marks
+      const totalMarks = test.questions.reduce((sum, q) => sum + q.marks, 0);
+
+      // Insert test into database
+      const { data: newTest, error: testError } = await supabase
+        .from("tests")
+        .insert({
+          title: test.title,
+          subject: test.subject,
+          duration_minutes: test.duration,
+          created_by: test.createdBy,
+          test_id: testId,
+          test_type: testType,
+          total_marks: totalMarks,
+          passing_marks: Math.floor(totalMarks * 0.4),
+        })
+        .select()
+        .single();
+
+      if (testError) {
+        console.error("Error creating test:", testError);
+        toast({
+          title: "Error",
+          description: "Failed to create test. Please try again.",
+          variant: "destructive",
+        });
+        setIsLoading(false);
+        return;
+      }
+
+      // Insert questions
+      const questionsToInsert = test.questions.map((q, index) => ({
+        test_id: newTest.id,
+        question_text: q.text,
+        question_type: mapQuestionType(q.type),
+        options: q.options ? q.options : null,
+        correct_answer: q.correctAnswer?.toString() || null,
+        marks: q.marks,
+        order_number: index + 1,
+      }));
+
+      const { error: questionsError } = await supabase
+        .from("questions")
+        .insert(questionsToInsert);
+
+      if (questionsError) {
+        console.error("Error creating questions:", questionsError);
+        toast({
+          title: "Warning",
+          description: "Test created but some questions failed to save.",
+          variant: "destructive",
+        });
+      }
+
+      // Refresh tests list
+      await fetchTests();
+
+      toast({
+        title: "Success",
+        description: "Test created successfully!",
+      });
+    } catch (error) {
+      console.error("Error in createTest:", error);
+      toast({
+        title: "Error",
+        description: "An unexpected error occurred.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const updateTest = async (id: string, updatedFields: Partial<Test>) => {
     setIsLoading(true);
-    
-    const updatedTests = tests.map(test => 
-      test.id === id 
-        ? { 
-            ...test, 
-            ...updatedFields,
-            questions: updatedFields.questions ? updatedFields.questions.map(q => ({
-              ...q,
-              id: q.id || crypto.randomUUID()
-            })) : test.questions
-          }
-        : test
-    );
-    
-    setTests(updatedTests);
-    localStorage.setItem("pariksha_tests", JSON.stringify(updatedTests));
-    
-    setIsLoading(false);
+
+    try {
+      const updateData: any = {};
+      
+      if (updatedFields.title) updateData.title = updatedFields.title;
+      if (updatedFields.subject) updateData.subject = updatedFields.subject;
+      if (updatedFields.duration) updateData.duration_minutes = updatedFields.duration;
+
+      if (Object.keys(updateData).length > 0) {
+        const { error } = await supabase
+          .from("tests")
+          .update(updateData)
+          .eq("id", id);
+
+        if (error) {
+          console.error("Error updating test:", error);
+          toast({
+            title: "Error",
+            description: "Failed to update test.",
+            variant: "destructive",
+          });
+          setIsLoading(false);
+          return;
+        }
+      }
+
+      await fetchTests();
+
+      toast({
+        title: "Success",
+        description: "Test updated successfully!",
+      });
+    } catch (error) {
+      console.error("Error in updateTest:", error);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const deleteTest = async (id: string) => {
     setIsLoading(true);
-    
-    const updatedTests = tests.filter(test => test.id !== id);
-    setTests(updatedTests);
-    localStorage.setItem("pariksha_tests", JSON.stringify(updatedTests));
-    
-    setIsLoading(false);
+
+    try {
+      // Delete questions first (due to foreign key constraint)
+      const { error: questionsError } = await supabase
+        .from("questions")
+        .delete()
+        .eq("test_id", id);
+
+      if (questionsError) {
+        console.error("Error deleting questions:", questionsError);
+      }
+
+      // Delete the test
+      const { error: testError } = await supabase
+        .from("tests")
+        .delete()
+        .eq("id", id);
+
+      if (testError) {
+        console.error("Error deleting test:", testError);
+        toast({
+          title: "Error",
+          description: "Failed to delete test.",
+          variant: "destructive",
+        });
+        setIsLoading(false);
+        return;
+      }
+
+      await fetchTests();
+
+      toast({
+        title: "Success",
+        description: "Test deleted successfully!",
+      });
+    } catch (error) {
+      console.error("Error in deleteTest:", error);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const getTestById = (id: string) => {
     return tests.find((test) => test.id === id);
+  };
+
+  const refreshTests = async () => {
+    setIsLoading(true);
+    await fetchTests();
   };
 
   const value: TestContextType = {
@@ -198,6 +306,7 @@ export function TestProvider({ children }: { children: ReactNode }) {
     deleteTest,
     getTestById,
     generateUniqueTestId,
+    refreshTests,
   };
 
   return <TestContext.Provider value={value}>{children}</TestContext.Provider>;
