@@ -46,12 +46,10 @@ const StudentDashboard = () => {
     }
   }, [user, navigate]);
 
-  if (!user) {
-    return null;
-  }
-
   // Get only published tests that students can take
-  const availableTests = tests.filter((test) => test.status === "published");
+  const availableTests = useMemo(() => {
+    return tests.filter((test) => test.status === "published");
+  }, [tests]);
 
   // Get unique subjects for filter
   const subjects = useMemo(() => {
@@ -115,19 +113,23 @@ const StudentDashboard = () => {
     return "Good evening";
   }, []);
 
+  if (!user) {
+    return null;
+  }
+
   return (
     <div className="min-h-screen p-4 md:p-6 relative overflow-hidden">
       <ThreeDBackground />
 
       {/* Floating decorations */}
       <motion.div
-        aria-hidden
+        aria-hidden="true"
         className="pointer-events-none absolute -top-10 -left-10 h-60 w-60 rounded-full bg-primary/20 blur-3xl"
         animate={{ y: [0, 20, 0], x: [0, 10, 0] }}
         transition={{ duration: 8, repeat: Infinity }}
       />
       <motion.div
-        aria-hidden
+        aria-hidden="true"
         className="pointer-events-none absolute -bottom-10 -right-10 h-72 w-72 rounded-full bg-violet-500/20 blur-3xl"
         animate={{ y: [0, -20, 0], x: [0, -10, 0] }}
         transition={{ duration: 9, repeat: Infinity }}
@@ -308,7 +310,7 @@ const StudentDashboard = () => {
               </div>
 
               <div className="space-y-3">
-                <div className="p-3 rounded-lg bg-accent/50 hover:bg-accent transition-colors">
+                <button className="w-full p-3 rounded-lg bg-accent/50 hover:bg-accent transition-colors">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <BarChart3 className="h-4 w-4 text-primary" />
@@ -316,8 +318,8 @@ const StudentDashboard = () => {
                     </div>
                     <ChevronRight className="h-4 w-4 text-muted-foreground" />
                   </div>
-                </div>
-                <div className="p-3 rounded-lg bg-accent/50 hover:bg-accent transition-colors">
+                </button>
+                <button className="w-full p-3 rounded-lg bg-accent/50 hover:bg-accent transition-colors">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <Calendar className="h-4 w-4 text-primary" />
@@ -325,7 +327,7 @@ const StudentDashboard = () => {
                     </div>
                     <ChevronRight className="h-4 w-4 text-muted-foreground" />
                   </div>
-                </div>
+                </button>
               </div>
             </CardContent>
           </Card>
@@ -460,7 +462,7 @@ const StudentDashboard = () => {
                               <h4 className="font-medium truncate group-hover:text-primary transition-colors">
                                 {test.title}
                               </h4>
-                              <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">
+                              <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1 flex-wrap">
                                 <Badge
                                   variant="outline"
                                   className="text-xs border-primary/30"
@@ -484,7 +486,13 @@ const StudentDashboard = () => {
                           <ChevronRight className="h-5 w-5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
                         </div>
 
-                        <Button className="w-full bg-gradient-to-r from-primary to-violet-500 hover:opacity-90">
+                        <Button
+                          className="w-full bg-gradient-to-r from-primary to-violet-500 hover:opacity-90"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigate(`/take-test/${test.id}`);
+                          }}
+                        >
                           <Zap className="mr-2 h-4 w-4" />
                           Start Test
                         </Button>
