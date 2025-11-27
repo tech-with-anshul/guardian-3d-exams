@@ -128,16 +128,20 @@ const StudentWarningsTable = ({
                 </TableCell>
                 <TableCell>
                   <span className={`px-2 py-1 rounded-full text-xs ${
-                    session.status === "active" 
-                      ? "bg-green-500/20 text-green-500" 
-                      : "bg-red-500/20 text-red-500"
+                    session.status === "submitted" 
+                      ? "bg-blue-500/20 text-blue-500"
+                      : session.status === "active" 
+                        ? "bg-green-500/20 text-green-500" 
+                        : "bg-red-500/20 text-red-500"
                   }`}>
-                    {session.status === "active" ? "Active" : "Terminated"}
+                    {session.status === "submitted" ? "Submitted" : session.status === "active" ? "Active" : "Terminated"}
                   </span>
                 </TableCell>
                 <TableCell>
                   <div className="flex gap-2">
-                    {session.status === "active" ? (
+                    {session.status === "submitted" ? (
+                      <span className="text-sm text-muted-foreground">Completed</span>
+                    ) : session.status === "active" ? (
                       <Button 
                         size="sm" 
                         variant="destructive" 

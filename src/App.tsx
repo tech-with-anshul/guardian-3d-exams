@@ -11,6 +11,7 @@ import StudentDashboard from "./pages/StudentDashboard";
 import CreateTest from "./pages/CreateTest";
 import TakeTest from "./pages/TakeTest";
 import EvaluateTest from "./pages/EvaluateTest";
+import EvaluateSubmission from "./pages/EvaluateSubmission";
 import NotFound from "./pages/NotFound";
 import Index from "./pages/Index";
 import Landing from "./pages/Landing";
@@ -39,6 +40,7 @@ const App = () => {
                   <Route path="/evaluate-test/:id" element={<EvaluateTest />} />
                   <Route path="/admin" element={<AdminPanel />} />
                   <Route path="/test-dashboard/:id" element={<TestDashboard />} />
+                  <Route path="/evaluate-submission/:testId/:sessionId/:studentId" element={<EvaluateSubmission />} />
                   <Route path="/developers" element={<Developers />} />
                   {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                   <Route path="*" element={<NotFound />} />
