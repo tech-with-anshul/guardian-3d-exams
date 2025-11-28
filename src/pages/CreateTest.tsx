@@ -319,7 +319,7 @@ const CreateTest = () => {
 
               <div className="space-y-2">
                 <Label htmlFor="difficulty">Difficulty Level</Label>
-                <Select value={difficulty} onValueChange={setDifficulty}>
+                <Select value={difficulty} onValueChange={(value) => setDifficulty(value as "easy" | "medium" | "hard")}>
                   <SelectTrigger id="difficulty">
                     <SelectValue />
                   </SelectTrigger>
