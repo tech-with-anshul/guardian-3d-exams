@@ -1,5 +1,3 @@
-
-import { useAuth } from "@/context/AuthContext";
 import { useTest, type Test } from "@/context/TestContext";
 import { useToast } from "@/components/ui/use-toast";
 import {
@@ -27,18 +25,16 @@ import { Trash2, ExternalLink } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useState, useEffect } from "react";
+import { supabase } from "@/integrations/supabase/client";
 
 interface UserProfile {
   id: string;
-  name: string;
+  full_name: string;
   email: string;
-  erpId: string;
-  role: string;
 }
 
 const TestManagementTable = () => {
   const { tests, deleteTest, isLoading: testsLoading } = useTest();
-  const { getUsers } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
   const [profiles, setProfiles] = useState<UserProfile[]>([]);
@@ -47,19 +43,12 @@ const TestManagementTable = () => {
   useEffect(() => {
     const fetchAllProfiles = async () => {
       try {
-        const [faculty, students, admins] = await Promise.all([
-          getUsers("faculty"),
-          getUsers("student"), 
-          getUsers("admin")
-        ]);
-        const allProfiles = [...faculty, ...students, ...admins].map(user => ({
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          erpId: user.erpId,
-          role: user.role || 'unknown'
-        }));
-        setProfiles(allProfiles);
+        const { data, error } = await supabase
+          .from("profiles")
+          .select("id, full_name, email");
+        
+        if (error) throw error;
+        setProfiles(data || []);
       } catch (error) {
         console.error("Error fetching profiles:", error);
       } finally {
@@ -68,12 +57,11 @@ const TestManagementTable = () => {
     };
 
     fetchAllProfiles();
-  }, [getUsers]);
+  }, []);
 
   const getCreatorName = (userId: string) => {
-    if (!profiles) return "Unknown";
     const profile = profiles.find((p) => p.id === userId);
-    return profile ? profile.name : "Unknown User";
+    return profile ? profile.full_name : "Unknown User";
   };
 
   const handleDelete = async (testId: string) => {
