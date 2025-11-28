@@ -4,59 +4,90 @@ import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/use-toast";
-import { UserRole, useAuth, User } from "@/context/AuthContext";
-import { Layout, UserPlus, Users, FileText } from "lucide-react";
+import { useAuth, User } from "@/context/AuthContext";
+import { Layout, Users, FileText, Loader2 } from "lucide-react";
 import UserTable from "@/components/admin/UserTable";
-import UserForm, { UserFormData } from "@/components/admin/UserForm";
 import StatsCard from "@/components/admin/StatsCard";
 import AdminNavigation from "@/components/admin/AdminNavigation";
+import { supabase } from "@/integrations/supabase/client";
+
+interface ProfileWithRole extends User {
+  roleFromDb?: string;
+}
 
 const AdminPanel = () => {
   const [activeMainTab, setActiveMainTab] = useState("users");
   const [activeUserTab, setActiveUserTab] = useState("faculty");
-  const [facultyList, setFacultyList] = useState<User[]>([]);
-  const [studentsList, setStudentsList] = useState<User[]>([]);
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [facultyList, setFacultyList] = useState<ProfileWithRole[]>([]);
+  const [studentsList, setStudentsList] = useState<ProfileWithRole[]>([]);
+  const [isLoadingUsers, setIsLoadingUsers] = useState(true);
   const [activityLogs, setActivityLogs] = useState<string[]>([
     "Admin logged in at 09:23 AM",
-    "New faculty member added at 10:15 AM",
-    "Student record updated at 11:30 AM",
     "System backup completed at 12:00 PM",
   ]);
   
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { user, getUsers, addUser, updateUser, deleteUser } = useAuth();
+  const { user, isAuthenticated, isLoading } = useAuth();
 
-  // Load users on mount
+  // Fetch users from database
+  const fetchUsers = async () => {
+    try {
+      setIsLoadingUsers(true);
+      
+      // Fetch all profiles with their roles
+      const { data: profiles, error: profilesError } = await supabase
+        .from("profiles")
+        .select("*");
+
+      if (profilesError) throw profilesError;
+
+      const { data: roles, error: rolesError } = await supabase
+        .from("user_roles")
+        .select("*");
+
+      if (rolesError) throw rolesError;
+
+      // Map profiles with roles
+      const usersWithRoles = (profiles || []).map((profile) => {
+        const userRole = roles?.find((r) => r.user_id === profile.id);
+        return {
+          id: profile.id,
+          name: profile.full_name,
+          email: profile.email,
+          role: userRole?.role || null,
+        } as ProfileWithRole;
+      });
+
+      setFacultyList(usersWithRoles.filter((u) => u.role === "faculty"));
+      setStudentsList(usersWithRoles.filter((u) => u.role === "student"));
+    } catch (error) {
+      console.error("Error fetching users:", error);
+      toast({
+        title: "Error",
+        description: "Failed to load users",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoadingUsers(false);
+    }
+  };
+
   useEffect(() => {
-    const loadUsers = async () => {
-      if (user && (user.role === "admin" || (user.role === "faculty" && user.permissions?.includes("manage_users")))) {
-        const facultyData = await getUsers("faculty");
-        const studentsData = await getUsers("student");
-        setFacultyList(facultyData);
-        setStudentsList(studentsData);
-      }
-    };
-    
-    loadUsers();
-  }, [user, getUsers]);
+    if (isAuthenticated && user?.role === "admin") {
+      fetchUsers();
+    }
+  }, [isAuthenticated, user]);
 
   // Check if user is authenticated and has admin role
   useEffect(() => {
-    if (!user) {
+    if (!isLoading && !isAuthenticated) {
       navigate("/login");
       return;
     }
     
-    // Check if user has permissions to access admin panel
-    const hasAdminAccess = user.role === "admin" || 
-      (user.role === "faculty" && user.permissions?.includes("manage_users"));
-      
-    if (!hasAdminAccess) {
+    if (!isLoading && user && user.role !== "admin") {
       toast({
         title: "Access Denied",
         description: "You don't have permission to access the admin panel",
@@ -64,179 +95,25 @@ const AdminPanel = () => {
       });
       navigate(user.role === "faculty" ? "/faculty-dashboard" : "/student-dashboard");
     }
-  }, [user, navigate, toast]);
-
-  if (!user) {
-    return null;
-  }
-
-  const handleAddUser = async (userData: UserFormData) => {
-    const role = activeUserTab === "faculty" ? "faculty" as UserRole : "student" as UserRole;
-    
-    if (!userData.name || !userData.email || !userData.password) {
-      toast({
-        title: "Missing Fields",
-        description: "Please fill in all required fields",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    try {
-      const newUserData = {
-        name: userData.name,
-        email: userData.email,
-        role: role,
-        erpId: userData.erpId,
-        password: userData.password,
-        permissions: userData.permissions,
-        [role === "faculty" ? "department" : "course"]: role === "faculty" ? userData.department : userData.course,
-      };
-      
-      const success = await addUser(newUserData);
-      
-      if (success) {
-        // Refresh user lists
-        const facultyData = await getUsers("faculty");
-        const studentsData = await getUsers("student");
-        setFacultyList(facultyData);
-        setStudentsList(studentsData);
-        
-        toast({
-          title: "Success",
-          description: `New ${role} added successfully`,
-        });
-        
-        addActivityLog(`Added ${role}: ${userData.name}`);
-        setIsDialogOpen(false);
-      } else {
-        toast({
-          title: "Error",
-          description: "Failed to add user. Email or ERP ID may already exist.",
-          variant: "destructive",
-        });
-      }
-    } catch (error) {
-      console.error("Error adding user:", error);
-      toast({
-        title: "Error",
-        description: "Failed to add user. Please try again.",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const handleEditUser = (user: User) => {
-    setEditingUser(user);
-    setIsDialogOpen(true);
-  };
-
-  const handleUpdateUser = async (userData: UserFormData) => {
-    if (!editingUser) return;
-    
-    const role = editingUser.id.startsWith("f") ? "faculty" as UserRole : "student" as UserRole;
-    
-    // Only send password if it's provided (not empty)
-    const updateData: Partial<User> & { password?: string } = {
-      name: userData.name,
-      email: userData.email,
-      erpId: userData.erpId,
-      permissions: userData.permissions,
-      [role === "faculty" ? "department" : "course"]: 
-        role === "faculty" ? userData.department : userData.course,
-    };
-    
-    if (userData.password) {
-      updateData.password = userData.password;
-    }
-    
-    try {
-      const success = await updateUser(editingUser.id, updateData);
-      
-      if (success) {
-        // Refresh user lists
-        const facultyData = await getUsers("faculty");
-        const studentsData = await getUsers("student");
-        setFacultyList(facultyData);
-        setStudentsList(studentsData);
-        
-        toast({
-          title: "Success",
-          description: `${role === "faculty" ? "Faculty" : "Student"} updated successfully`,
-        });
-        
-        addActivityLog(`Updated ${role}: ${userData.name}`);
-        setEditingUser(null);
-        setIsDialogOpen(false);
-      } else {
-        toast({
-          title: "Error",
-          description: "Failed to update user",
-          variant: "destructive",
-        });
-      }
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "An error occurred while updating the user",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const handleDeleteUser = async (id: string, role: UserRole) => {
-    const userToDelete = role === "faculty" 
-      ? facultyList.find(f => f.id === id)
-      : studentsList.find(s => s.id === id);
-    
-    if (!userToDelete) return;
-    
-    try {
-      const success = await deleteUser(id);
-      
-      if (success) {
-        // Refresh user lists
-        const facultyData = await getUsers("faculty");
-        const studentsData = await getUsers("student");
-        setFacultyList(facultyData);
-        setStudentsList(studentsData);
-        
-        toast({
-          title: "Success",
-          description: `${role === "faculty" ? "Faculty" : "Student"} deleted successfully`,
-        });
-        
-        addActivityLog(`Deleted ${role}: ${userToDelete.name}`);
-      } else {
-        toast({
-          title: "Error",
-          description: "Failed to delete user",
-          variant: "destructive",
-        });
-      }
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "An error occurred while deleting the user",
-        variant: "destructive",
-      });
-    }
-  };
+  }, [user, isAuthenticated, isLoading, navigate, toast]);
 
   const addActivityLog = (message: string) => {
     const timestamp = new Date().toLocaleTimeString();
     setActivityLogs((prev) => [`${message} at ${timestamp}`, ...prev.slice(0, 9)]);
   };
 
-  const handleDialogClose = () => {
-    setEditingUser(null);
-    setIsDialogOpen(false);
-  };
-
   const handleMainTabChange = (value: string) => {
     setActiveMainTab(value);
     addActivityLog(`Navigated to ${value} section`);
   };
+
+  if (isLoading || !user) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background p-6">
@@ -251,8 +128,8 @@ const AdminPanel = () => {
               <Layout className="h-8 w-8 text-primary" />
               <h1 className="text-3xl font-bold">Admin Panel</h1>
             </div>
-            <Button variant="outline" onClick={() => navigate(user.role === "admin" ? "/" : "/faculty-dashboard")}>
-              Back to {user.role === "admin" ? "Home" : "Dashboard"}
+            <Button variant="outline" onClick={() => navigate("/")}>
+              Back to Home
             </Button>
           </div>
           
@@ -284,53 +161,48 @@ const AdminPanel = () => {
                   <CardHeader>
                     <CardTitle>Manage Users</CardTitle>
                     <CardDescription>
-                      Add, edit, or remove faculty and students from the system
+                      View faculty and students in the system
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <Tabs 
-                      defaultValue={activeUserTab} 
-                      onValueChange={setActiveUserTab}
-                      className="w-full"
-                    >
-                      <div className="flex justify-between items-center mb-6">
-                        <TabsList>
+                    {isLoadingUsers ? (
+                      <div className="flex items-center justify-center py-8">
+                        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                      </div>
+                    ) : (
+                      <Tabs 
+                        defaultValue={activeUserTab} 
+                        onValueChange={setActiveUserTab}
+                        className="w-full"
+                      >
+                        <TabsList className="mb-6">
                           <TabsTrigger value="faculty">Faculty</TabsTrigger>
                           <TabsTrigger value="students">Students</TabsTrigger>
                         </TabsList>
                         
-                        <Button onClick={() => setIsDialogOpen(true)}>
-                          <UserPlus className="mr-2 h-4 w-4" />
-                          Add {activeUserTab === "faculty" ? "Faculty" : "Student"}
-                        </Button>
-                      </div>
-                      
-                      <TabsContent value="faculty">
-                        <Card>
-                          <CardContent className="p-0">
-                            <UserTable 
-                              users={facultyList}
-                              role="faculty"
-                              onEdit={handleEditUser}
-                              onDelete={handleDeleteUser}
-                            />
-                          </CardContent>
-                        </Card>
-                      </TabsContent>
-                      
-                      <TabsContent value="students">
-                        <Card>
-                          <CardContent className="p-0">
-                            <UserTable 
-                              users={studentsList}
-                              role="student"
-                              onEdit={handleEditUser}
-                              onDelete={handleDeleteUser}
-                            />
-                          </CardContent>
-                        </Card>
-                      </TabsContent>
-                    </Tabs>
+                        <TabsContent value="faculty">
+                          <Card>
+                            <CardContent className="p-0">
+                              <UserTable 
+                                users={facultyList}
+                                role="faculty"
+                              />
+                            </CardContent>
+                          </Card>
+                        </TabsContent>
+                        
+                        <TabsContent value="students">
+                          <Card>
+                            <CardContent className="p-0">
+                              <UserTable 
+                                users={studentsList}
+                                role="student"
+                              />
+                            </CardContent>
+                          </Card>
+                        </TabsContent>
+                      </Tabs>
+                    )}
                   </CardContent>
                 </Card>
               </AdminNavigation>
@@ -359,32 +231,6 @@ const AdminPanel = () => {
               </Card>
             </div>
           </div>
-          
-          <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-            <DialogContent className="sm:max-w-[500px]">
-              <DialogHeader>
-                <DialogTitle>
-                  {editingUser 
-                    ? `Edit ${editingUser.id.startsWith('f') ? 'Faculty' : 'Student'}`
-                    : `Add New ${activeUserTab === "faculty" ? "Faculty" : "Student"}`}
-                </DialogTitle>
-                <DialogDescription>
-                  {editingUser
-                    ? "Update the details below to modify this user."
-                    : "Fill in the details below to add a new user to the system."}
-                </DialogDescription>
-              </DialogHeader>
-              
-              <UserForm
-                role={editingUser 
-                  ? (editingUser.id.startsWith('f') ? "faculty" : "student") as UserRole 
-                  : activeUserTab === "faculty" ? "faculty" : "student"}
-                onSubmit={editingUser ? handleUpdateUser : handleAddUser}
-                onCancel={handleDialogClose}
-                editingUser={editingUser}
-              />
-            </DialogContent>
-          </Dialog>
         </motion.div>
       </div>
     </div>
