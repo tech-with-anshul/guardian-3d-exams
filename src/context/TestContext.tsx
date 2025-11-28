@@ -109,6 +109,19 @@ export function TestProvider({ children }: { children: ReactNode }) {
     setIsLoading(true);
 
     try {
+      // Get the authenticated user
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      
+      if (authError || !user) {
+        toast({
+          title: "Error",
+          description: "You must be logged in to create a test.",
+          variant: "destructive",
+        });
+        setIsLoading(false);
+        return;
+      }
+
       const testId = generateUniqueTestId();
       
       // Map question type to database enum
@@ -134,14 +147,14 @@ export function TestProvider({ children }: { children: ReactNode }) {
       // Calculate total marks
       const totalMarks = test.questions.reduce((sum, q) => sum + q.marks, 0);
 
-      // Insert test into database
+      // Insert test into database - use authenticated user's ID
       const { data: newTest, error: testError } = await supabase
         .from("tests")
         .insert({
           title: test.title,
           subject: test.subject,
           duration_minutes: test.duration,
-          created_by: test.createdBy,
+          created_by: user.id, // Use authenticated user's ID
           test_id: testId,
           test_type: testType,
           total_marks: totalMarks,
@@ -154,7 +167,9 @@ export function TestProvider({ children }: { children: ReactNode }) {
         console.error("Error creating test:", testError);
         toast({
           title: "Error",
-          description: "Failed to create test. Please try again.",
+          description: testError.message.includes("row-level security") 
+            ? "You don't have permission to create tests. Please ensure you have faculty or admin role."
+            : "Failed to create test. Please try again.",
           variant: "destructive",
         });
         setIsLoading(false);
