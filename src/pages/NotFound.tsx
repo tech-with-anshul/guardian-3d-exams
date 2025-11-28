@@ -16,14 +16,11 @@ import {
   Search,
   ShieldCheck,
   Sparkles,
-  User,
+  User
 } from "lucide-react";
-import type {
-  KeyboardEvent as ReactKeyboardEvent,
-  MouseEvent as ReactMouseEvent,
-  ReactNode,
-} from "react";
 import {
+  KeyboardEvent,
+  MouseEvent as ReactMouseEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -32,7 +29,7 @@ import {
 } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
-type Suggestion = { label: string; path: string; icon: ReactNode };
+type Suggestion = { label: string; path: string; icon: JSX.Element };
 
 const NotFound = () => {
   const location = useLocation();
@@ -51,18 +48,15 @@ const NotFound = () => {
     damping: 20,
   });
 
-  const handleMouseMove = useCallback(
-    (e: ReactMouseEvent<HTMLDivElement>) => {
-      const el = tiltRef.current;
-      if (!el) return;
-      const rect = el.getBoundingClientRect();
-      const px = (e.clientX - rect.left) / rect.width - 0.5;
-      const py = (e.clientY - rect.top) / rect.height - 0.5;
-      x.set(px);
-      y.set(py);
-    },
-    [x, y]
-  );
+  const handleMouseMove = useCallback((e: ReactMouseEvent) => {
+    const el = tiltRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const px = (e.clientX - rect.left) / rect.width - 0.5;
+    const py = (e.clientY - rect.top) / rect.height - 0.5;
+    x.set(px);
+    y.set(py);
+  }, [x, y]);
 
   const resetTilt = useCallback(() => {
     x.set(0);
@@ -81,7 +75,6 @@ const NotFound = () => {
     ],
     []
   );
-
   const [query, setQuery] = useState("");
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -92,7 +85,7 @@ const NotFound = () => {
   }, [query, allSuggestions]);
   const [activeIndex, setActiveIndex] = useState(0);
 
-  const onKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>) => {
+  const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (!filtered.length) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -114,7 +107,7 @@ const NotFound = () => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1600);
     } catch {
-      // ignore
+      /* noop */
     }
   };
 
@@ -127,10 +120,7 @@ const NotFound = () => {
   }, [location.pathname]);
 
   useEffect(() => {
-    console.error(
-      "404 Error: User attempted to access non-existent route:",
-      location.pathname
-    );
+    console.error("404 Error: User attempted to access non-existent route:", location.pathname);
   }, [location.pathname]);
 
   return (
@@ -156,7 +146,7 @@ const NotFound = () => {
           ref={tiltRef}
           onMouseMove={handleMouseMove}
           onMouseLeave={resetTilt}
-          style={{ rotateX, rotateY, perspective: 1000 }}
+          style={{ rotateX, rotateY, transformStyle: "preserve-3d" as any }}
           initial={{ opacity: 0, y: 24 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, ease: "easeOut" }}
@@ -172,6 +162,7 @@ const NotFound = () => {
                   dragElastic={0.2}
                   whileTap={{ scale: 0.95 }}
                   className="relative mb-6 will-change-transform"
+                  style={{ transformStyle: "preserve-3d" as any }}
                 >
                   <div className="absolute -inset-6 rounded-3xl bg-gradient-to-br from-primary/20 to-violet-500/20 blur-2xl" />
                   <div className="relative inline-flex items-center justify-center h-20 w-20 rounded-2xl bg-gradient-to-br from-primary to-violet-500 text-white shadow-lg">
